@@ -11,7 +11,7 @@ def get_connection():
             host="localhost",
             database="first_db",
             user="postgres",
-            password="Pavankandi7680$",
+            password="Pavankandi7680$", 
             port=5432
         )
         logging.info("Database connection established.")
