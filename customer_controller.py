@@ -5,6 +5,8 @@ import logging
 from flask import Flask, jsonify, request
 from db_utility import get_connection
 from email_helper import send_success_email
+from email_helper import send_name_update_email
+from email_helper import send_address_update_email 
 
 shutil.rmtree("__pycache__", ignore_errors=True)
 
@@ -65,9 +67,10 @@ def insert_customer_and_address_data():
         conn.commit()  # Commit all inserts in one go
         logging.info("Customer and address data inserted successfully.")
         
-        # Send a success email after data insertion
-        send_success_email()  # Sending email with the last inserted customer's name
-
+        #-------------- Send a success email after data insertion------------------
+        send_success_email() 
+        #--------------------------------------------------------------------------
+        
         return jsonify({"message": "Customer and address data inserted from CSV."}), 201
 
     except FileNotFoundError:
@@ -87,7 +90,7 @@ def insert_customer_and_address_data():
         if 'cur' in locals(): cur.close()
         if 'conn' in locals(): conn.close()
         logging.info("Database connection closed after insertion.")
-
+    
 
 # --------------------  GET get_customer_details --------------------
 
@@ -142,19 +145,18 @@ def get_customer_details():
         if 'cur' in locals(): cur.close()
         if 'conn' in locals(): conn.close()
         logging.info("Database connection closed after fetching customer details.")
-
+        
 
 
 # -------------------- PUT Endpoint: Update Customer Name --------------------
 
-
 @app.route('/update_customer_name', methods=['PUT'])
 def update_customer_name():
     """
-    PUT //update_customer_name
-    Updates a customer's name based on their email or phone number.
+    PUT /update_customer_name
+    Updates a customer's name based on email or phone number.
     Expects JSON payload with 'new_name' and either 'email_id' or 'phone_no'.
-    Returns updated customer data.
+    Returns old and updated name with contact details.
     """
     data = request.get_json()
     new_name = data.get('new_name')
@@ -168,7 +170,20 @@ def update_customer_name():
         conn = get_connection()
         cur = conn.cursor()
 
-        # Build WHERE condition dynamically
+        # Fetch old name using email or phone
+        if email_id:
+            cur.execute("SELECT name FROM customer WHERE email_id = %s", (email_id,))
+        else:
+            cur.execute("SELECT name FROM customer WHERE phone_no = %s", (phone_no,))
+
+        old_row = cur.fetchone()
+
+        if not old_row:
+            return jsonify({"message": "Customer not found"}), 404
+
+        old_name = old_row[0]
+
+        # Update the name
         if email_id:
             cur.execute("UPDATE customer SET name = %s WHERE email_id = %s RETURNING name, email_id, phone_no",
                         (new_name, email_id))
@@ -180,16 +195,19 @@ def update_customer_name():
         conn.commit()
 
         if updated_row:
+            # Send email with old and new names
+            send_name_update_email(old_name, updated_row[0])
+
             result = {
-                "name": updated_row[0],
+                "old_name": old_name,
+                "updated_name": updated_row[0],
                 "email_id": updated_row[1],
                 "phone_no": updated_row[2]
             }
             logging.info("Customer name updated successfully.")
             return jsonify(result)
         else:
-            logging.warning("No customer found with provided identifier.")
-            return jsonify({"message": "Customer not found"}), 404
+            return jsonify({"message": "Customer not found during update"}), 404
 
     except Exception as e:
         logging.error(f"Error updating customer name: {e}")
@@ -198,6 +216,7 @@ def update_customer_name():
         if 'cur' in locals(): cur.close()
         if 'conn' in locals(): conn.close()
         logging.info("Database connection closed after update.")
+
 
 
 # -------------------- PUT Endpoint:update_address_details --------------------
@@ -237,9 +256,28 @@ def update_address_details():
         conn = get_connection()
         cur = conn.cursor()
 
-        # Build WHERE condition dynamically
+        # Fetch old address using customer_id_fk or email_id
         if customer_id_fk:
-            # Update address based on customer_id_fk
+            cur.execute("""
+                SELECT street_1, street_2, city, state, pincode
+                FROM address
+                WHERE customer_id_fk = %s
+            """, (customer_id_fk,))
+        else:
+            cur.execute("""
+                SELECT street_1, street_2, city, state, pincode
+                FROM address
+                JOIN customer ON address.customer_id_fk = customer.customer_id
+                WHERE customer.email_id = %s
+            """, (email_id,))
+
+        old_address_row = cur.fetchone()
+
+        if not old_address_row:
+            return jsonify({"message": "Address not found"}), 404
+
+        # Update the address
+        if customer_id_fk:
             cur.execute("""
                 UPDATE address 
                 SET street_1 = %s, street_2 = %s, city = %s, state = %s, pincode = %s
@@ -247,7 +285,6 @@ def update_address_details():
                 RETURNING customer_id_fk, street_1, street_2, city, state, pincode
             """, (new_street_1, new_street_2, new_city, new_state, new_pincode, customer_id_fk))
         else:
-            # Update address based on email_id (join customer to get customer_id_fk)
             cur.execute("""
                 UPDATE address 
                 SET street_1 = %s, street_2 = %s, city = %s, state = %s, pincode = %s
@@ -260,6 +297,14 @@ def update_address_details():
         conn.commit()
 
         if updated_row:
+            # Send email with old, new, and updated addresses
+            send_address_update_email(
+                old_address_row[0], old_address_row[1], old_address_row[2], old_address_row[3], old_address_row[4],  # Old address
+                new_street_1, new_street_2, new_city, new_state, new_pincode,  # New address
+                updated_row[1], updated_row[2], updated_row[3], updated_row[4], updated_row[5],  # Updated address
+                updated_row[0]  # customer_id_fk
+            )
+
             result = {
                 "customer_id_fk": updated_row[0],
                 "street_1": updated_row[1],
@@ -281,6 +326,7 @@ def update_address_details():
         if 'cur' in locals(): cur.close()
         if 'conn' in locals(): conn.close()
         logging.info("Database connection closed after update.")
+
 
 
 
