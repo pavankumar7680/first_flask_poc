@@ -4,6 +4,7 @@ import shutil
 import logging
 from flask import Flask, jsonify, request
 from db_utility import get_connection
+from email_helper import send_success_email
 
 shutil.rmtree("__pycache__", ignore_errors=True)
 
@@ -15,6 +16,8 @@ logging.basicConfig(
 
 # -------------------- Flask App Initialization --------------------
 app = Flask(__name__)
+
+# --------------------  POST insert_customer_and_address_data --------------------
 
 @app.route('/insert_customer_and_address_data', methods=['POST'])
 def insert_customer_and_address_data():
@@ -61,6 +64,10 @@ def insert_customer_and_address_data():
 
         conn.commit()  # Commit all inserts in one go
         logging.info("Customer and address data inserted successfully.")
+        
+        # Send a success email after data insertion
+        send_success_email()  # Sending email with the last inserted customer's name
+
         return jsonify({"message": "Customer and address data inserted from CSV."}), 201
 
     except FileNotFoundError:
@@ -82,7 +89,65 @@ def insert_customer_and_address_data():
         logging.info("Database connection closed after insertion.")
 
 
+# --------------------  GET get_customer_details --------------------
+
+@app.route('/get_customer_details', methods=['GET'])
+def get_customer_details():
+    """
+    GET /get_customer_details
+    Retrieves customer details (name, email_id, phone_no) based on optional filters like email_id or phone_no.
+    If no filters are provided, returns all customers.
+    """
+    email_id = request.args.get('email_id')
+    phone_no = request.args.get('phone_no')
+
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        # Base query
+        query = "SELECT name, email_id, phone_no FROM customer"
+        params = []
+
+        # Add filter conditions
+        if email_id:
+            query += " WHERE email_id = %s"
+            params.append(email_id)
+        elif phone_no:
+            query += " WHERE phone_no = %s"
+            params.append(phone_no)
+
+        cur.execute(query, params)
+        rows = cur.fetchall()
+
+        if not rows:
+            return jsonify([]), 200  # Return empty list if no match
+
+        customers = [
+            {
+                "name": row[0],
+                "email_id": row[1],
+                "phone_no": row[2]
+            }
+            for row in rows
+        ]
+
+        return jsonify(customers), 200
+
+    except Exception as e:
+        logging.error(f"Error fetching customer details: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
+    finally:
+        if 'cur' in locals(): cur.close()
+        if 'conn' in locals(): conn.close()
+        logging.info("Database connection closed after fetching customer details.")
+
+
+
 # -------------------- PUT Endpoint: Update Customer Name --------------------
+
+
 @app.route('/update_customer_name', methods=['PUT'])
 def update_customer_name():
     """
@@ -133,6 +198,9 @@ def update_customer_name():
         if 'cur' in locals(): cur.close()
         if 'conn' in locals(): conn.close()
         logging.info("Database connection closed after update.")
+
+
+# -------------------- PUT Endpoint:update_address_details --------------------
 
 @app.route('/update_address_details', methods=['PUT'])
 def update_address_details():
