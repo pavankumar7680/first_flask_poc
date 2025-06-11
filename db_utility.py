@@ -8,6 +8,7 @@ def get_connection():
     """
     try:
         conn = psycopg2.connect(
+        # this is used to connect
             host="localhost",
             database="first_db",
             user="postgres",
