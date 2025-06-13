@@ -1,4 +1,4 @@
-#importing necessary packages
+#importing necessary packages 
 import psycopg2
 def get_db_connection():
     try:
